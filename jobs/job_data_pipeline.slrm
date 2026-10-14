@@ -1,0 +1,199 @@
+#!/bin/bash
+# =====================================================================
+# jobs/job_data_pipeline.slrm — FASE 0: pings crudos → df_rec_full (CPU)
+# =====================================================================
+# Corre func/run_new_pipeline.py con UNA RUTA POR TAREA. De aquí sale todo lo
+# que consumen las tres fases siguientes:
+#
+#   data/02_interim/routes/<ruta>/dataframes/
+#       df_rec_clean_<RANGE>.parquet          pings limpios      (Apéndices C y D)
+#       df_final_new_trips_<RANGE>.parquet    un ping por fila + leg  (flota)
+#       df_rec_full_<RANGE>.parquet         ★ dataset con features → FASES 1 y 2
+#       trips_cache_<RANGE>/                  caché de build_trips (reanudable)
+#   data/02_interim/routes/<ruta>/perf/funnel_<RANGE>.json     ← Tabla 1 (funnel)
+#   data/02_interim/routes/<ruta>/perf/perf_<RANGE>.json       ← tiempos y RSS
+#
+# ── POR QUÉ ES CPU-ONLY ──────────────────────────────────────────────────────
+# Se invoca con `--no-lstm`: en el régimen del frame el LSTM NO se entrena aquí,
+# sino en la fase 2 (jobs/job_lstm_frame.slrm) sobre el frame de evaluación que
+# escribe la fase 1. Entrenarlo aquí produciría un modelo que NO está pareado
+# con los baselines — es exactamente el problema que el frame vino a resolver.
+# Por la misma razón va `--no-baselines`: los baselines (KNN, kernel, lineal,
+# delay, delay_hour) los corre la fase 1 DENTRO del mismo bucle de CV que
+# XGBoost, sobre la misma muestra y los mismos folds.
+# `--no-maps --no-dashboards` quitan HTML de folium que nadie mira en batch y
+# que cuesta minutos por ruta.
+#
+# ── ORDEN DE LAS RUTAS ───────────────────────────────────────────────────────
+# ⚠ Los índices 0-34 son IDÉNTICOS a los de jobs/job_xgb_prediction.slrm y
+# jobs/job_lstm_frame.slrm. No es cosmético: `--dependency=aftercorr` empareja
+# la tarea k de un array con la tarea k del anterior, así que un orden distinto
+# lanzaría la fase 1 de una ruta contra los datos de OTRA. `run_pipeline.sh`
+# compara las tres listas antes de encadenar y se niega si difieren.
+#
+# Con la vuelta (rama `vuelta`, docs/PREREGISTRO_VUELTA.md) entran las 35 rutas y
+# no hay estratos: van por número de línea, cada variante junto a su principal
+# (1101-ALT = 110101, 1801-ALT = 180101, 1802-ALT = 180201; la 1401 y la 1402 son el
+# group_id 1400 del AVL, separado). La 902 ya no se excluye: con la vuelta su viaje
+# no depende de que los buses descansen en una terminal.
+# (En agosto el orden era por estrato, validated → group B → N=1, y la 902 iba al
+# final, sólo para su fila de la Tabla 1.)
+#
+# ── ENVÍO ────────────────────────────────────────────────────────────────────
+#   sbatch --array=0-34%6 jobs/job_data_pipeline.slrm      # las 35
+#   sbatch --array=23     jobs/job_data_pipeline.slrm      # solo la 1601
+#   FORCE=1 sbatch --array=0-34%6 jobs/job_data_pipeline.slrm   # ignora cachés
+# Lo que pongas después del script se pasa TAL CUAL a run_new_pipeline.py.
+#
+# Normalmente no se envía a mano: `run_pipeline.sh` lo encadena con las demás.
+#
+# Es REANUDABLE: build_trips y el enrich cachean en disco, así que relanzar tras
+# un timeout retoma donde iba (con FORCE=0, el default).
+#
+#SBATCH --job-name=data_pipe
+#SBATCH --account=pXXX
+#SBATCH --partition=cpu
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --time=24:00:00
+#SBATCH --output=logs/data_%A_%a.out
+#SBATCH --error=logs/data_%A_%a.err
+
+set -uo pipefail
+cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
+[ -f config.env ] && . ./config.env
+mkdir -p logs
+
+# ── Mapa índice → ruta ────────────────────────────────────────────────────────
+ROUTES=( \
+  101 102 201 202 301 302 401 402 501 601 801 901 902 \
+  1001 1002 1101 110101 1201 1301 1401 1402 1501 1502 \
+  1601 1602 1701 1702 1703 1801 180101 1802 180201 1901 1902 20000 )
+
+IDX="${SLURM_ARRAY_TASK_ID:-0}"
+if [ "$IDX" -ge "${#ROUTES[@]}" ]; then
+    echo "índice $IDX fuera de rango (${#ROUTES[@]} rutas) — nada que hacer"; exit 0
+fi
+ROUTE="${BUS_ROUTE_OVERRIDE:-${ROUTES[$IDX]}}"
+
+# ── Log con la ruta en el nombre ──────────────────────────────────────────────
+# Sin esto hay que abrir 35 ficheros para saber cuál es cuál. Se borra el par
+# anónimo que SLURM ya creó si quedó vacío.
+AID="${SLURM_ARRAY_JOB_ID:-$$}"; TID="${SLURM_ARRAY_TASK_ID:-0}"
+LOGBASE="logs/data_${ROUTE}_${AID}_${TID}"
+exec >>"${LOGBASE}.out" 2>>"${LOGBASE}.err"
+if [ -n "${SLURM_ARRAY_JOB_ID:-}" ]; then
+    for _f in "logs/data_${AID}_${TID}.out" "logs/data_${AID}_${TID}.err"; do
+        [ -e "$_f" ] && [ ! -s "$_f" ] && rm -f "$_f"
+    done
+    scontrol update JobId="${SLURM_JOB_ID}" JobName="data_${ROUTE}" 2>/dev/null || true
+fi
+
+# ── Entorno ───────────────────────────────────────────────────────────────────
+module purge 2>/dev/null || true
+# `sbatch` exporta TU shell (--export=ALL). Si enviaste el job con un venv
+# activo, estas tres variables le rompen el `import` al python de conda
+# (mezclarían site-packages y stdlib de otra versión).
+unset PYTHONPATH PYTHONHOME VIRTUAL_ENV
+PY="${PY:-/lustre/home/usuario/.conda/envs/tf-local/bin/python}"
+
+# Jupyter/OnDemand exporta MPLBACKEND=module://matplotlib_inline.backend_inline,
+# que no existe fuera de Jupyter: matplotlib revienta al importarse. Agg es el
+# backend headless correcto para batch.
+export MPLBACKEND=Agg
+export PYTHONIOENCODING=utf-8
+export PYTHONUNBUFFERED=1
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+export POLARS_MAX_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+
+MODE="${MODE:-full}"
+TERMINALS="${TERMINALS:-AUTO_min}"
+RANGE="${RANGE:-2024_01-08_tmin}"
+FORCE="${FORCE:-0}"
+
+echo "Nodo   : $(hostname)"
+echo "Inicio : $(date)"
+echo "Python : $PY"
+echo "Tarea  : idx=${IDX} → ruta ${ROUTE}   mode=${MODE}   terminals=${TERMINALS}"
+echo "Rango  : ${RANGE}   force=${FORCE}"
+
+# ── Fail-fast: dependencias ───────────────────────────────────────────────────
+# Antes de gastar horas de cola. `xgboost`/`sklearn` NO se piden aquí: son de la
+# fase 1 y su ausencia no impide producir df_rec_full.
+"$PY" - <<'PYCHK'
+import sys
+faltan = []
+for m in ("polars", "numpy", "scipy", "pyarrow", "h3", "matplotlib"):
+    try:
+        __import__(m)
+    except ImportError:
+        faltan.append(m)
+if faltan:
+    print("ERROR: al python del job le faltan:", ", ".join(faltan))
+    print("  Instálalos con el MISMO intérprete (ruta absoluta), no con `pip` a secas.")
+    sys.exit(1)
+import polars, h3
+print(f"deps OK · polars {polars.__version__} · h3 {h3.__version__}")
+# `psutil` es OPCIONAL: todos sus usos están en try/except y el pipeline corrió
+# sin él (env tf-local, captura del 21-jul). Sin psutil, el reporte de perf sale
+# sin `peak_rss_gb` ni `--mem sugerido`; nada más. No bloquea.
+try:
+    import psutil  # noqa: F401
+except ImportError:
+    print("nota: sin psutil → perf_*.json irá sin pico de RSS (no es un fallo)")
+PYCHK
+[ $? -eq 0 ] || exit 1
+
+# ── Guard de entrada: ¿existe el extracto crudo de esta ruta? ─────────────────
+# Sin esto, run_new_pipeline falla con un `ValueError: not enough values to
+# unpack` de resolve_routes, que no dice nada de lo que pasó.
+RAWDIR="data/01_raw/records/${ROUTE}"
+N_RAW="$(ls "${RAWDIR}"/df_rec_raw_"${ROUTE}"_*.parquet 2>/dev/null | wc -l)"
+if [ "$N_RAW" -eq 0 ]; then
+    echo "✗ ABORTA: no hay ningún extracto crudo en ${RAWDIR}/"
+    echo "  Se esperaba data/01_raw/records/${ROUTE}/df_rec_raw_${ROUTE}_<rango>.parquet"
+    echo "  Copia los datos crudos ANTES de lanzar (ver data/01_raw/README.md)."
+    exit 2
+fi
+echo "Raw    : ${N_RAW} extracto(s) en ${RAWDIR}"
+ls -lh "${RAWDIR}"/df_rec_raw_"${ROUTE}"_*.parquet | sed 's/^/         /'
+
+# ── Argumentos ────────────────────────────────────────────────────────────────
+EXTRA_ARGS=()
+[ "$FORCE" = "0" ] && EXTRA_ARGS+=(--no-force)
+[ -n "${RAW_DATE_RANGE:-}" ] && EXTRA_ARGS+=(--date-range "$RAW_DATE_RANGE")
+
+"$PY" -u func/run_new_pipeline.py \
+    --route "$ROUTE" \
+    --mode "$MODE" \
+    --terminals "$TERMINALS" \
+    --no-maps --no-dashboards --no-baselines --no-lstm \
+    "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" \
+    "$@"
+rc=$?
+
+# ── Guard de salida: el artefacto que consume la fase 1 ¿EXISTE y SE LEE? ─────
+# `is_file()` no basta. En la corrida del 26-jul, 11 parquet salieron truncados
+# (terminaban en \0\0\0\0 en vez de PAR1: escrituras que Lustre nunca vació) y
+# pasaron TRES auditorías porque todas preguntaban si el fichero existía. Peor:
+# la reanudación los daba por hechos y saltaba la ruta para siempre. Se
+# comprueba con func/parquet_guard.py, que lee la envoltura de verdad.
+OUT="data/02_interim/routes/${ROUTE}/dataframes/df_rec_full_${RANGE}.parquet"
+if [ "$rc" -eq 0 ]; then
+    if "$PY" -c "
+import sys; sys.path.insert(0, 'func')
+import parquet_guard as pg
+why = pg.parquet_problem('$OUT')
+sys.exit(0 if why is None else (print('  ' + why) or 1))
+"; then
+        echo "✓ df_full: $OUT  ($(du -h "$OUT" | cut -f1))"
+    else
+        echo "✗ el pipeline salió en verde pero $OUT NO se lee."
+        echo "  BÓRRALO antes de reenviar: mientras exista, la reanudación lo da"
+        echo "  por hecho y la fase 1 leerá basura o saltará la ruta."
+        rc=5
+    fi
+fi
+
+echo "Fin    : $(date)  (rc=$rc)"
+exit $rc

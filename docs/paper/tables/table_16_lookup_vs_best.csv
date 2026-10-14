@@ -1,0 +1,11 @@
+panel,n_routes,n_groups,comparison,model,metric,unit,model_wins,point,family_lo,family_hi,p_raw,p_holm
+all,35,31,"XGBoost (MAE, + context) − Delay (hourly)",xgb_mae_b,MAE,%,35,-2.217210687135714,-2.874366899295518,-1.8070532854454342,5.820766091346741e-11,1.1641532182693481e-10
+all,35,31,"XGBoost (MAE, + context) − Delay (hourly)",xgb_mae_b,MAE,s,35,-4.651713939760551,-5.519732823359487,-4.073067568672348,5.820766091346741e-11,1.1641532182693481e-10
+all,35,31,"XGBoost (MAE, + context) − Delay (hourly)",xgb_mae_b,On-time (centred),pp,35,1.0335716249656315,0.9008948044033751,1.2119343624902967,5.820766091346741e-11,1.1641532182693481e-10
+all,35,31,"XGBoost (MAE, + context) − Delay (hourly)",xgb_mae_b,On-time (APTA),pp,35,3.0988733290897486,2.5561648374404626,3.3524339446689453,5.820766091346741e-11,1.1641532182693481e-10
+all,35,31,"XGBoost (MAE, historical) − Delay (hourly)",xgb_mae,MAE,%,2,4.220019662603161,3.280398383490085,4.98169261935784,5.820766091346741e-10,5.820766091346741e-10
+all,35,31,"XGBoost (MAE, historical) − Delay (hourly)",xgb_mae,MAE,s,2,8.492817004587847,6.768696043657965,10.478860936523464,5.820766091346741e-10,5.820766091346741e-10
+all,35,31,"XGBoost (MAE, historical) − Delay (hourly)",xgb_mae,On-time (centred),pp,2,-1.1399908242850572,-1.449567692099201,-0.8169060160798409,1.1059455573558807e-9,1.1059455573558807e-9
+all,35,31,"XGBoost (MAE, historical) − Delay (hourly)",xgb_mae,On-time (APTA),pp,33,1.5018511993495025,1.1745587202538523,2.0584914748352787,8.149072527885437e-10,8.149072527885437e-10
+all,35,31,"share of the Delay → XGBoost (MAE, + context) gap closed by Delay (hourly)",delay_hour,MAE,% of gap,30,70.54182363372092,62.91013412698242,77.56214203277257,NaN,NaN
+all,35,31,"same share, from panel medians",delay_hour,MAE,% of gap,-1,79.02101346503257,NaN,NaN,NaN,NaN

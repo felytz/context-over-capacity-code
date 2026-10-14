@@ -1,0 +1,5 @@
+family,avl_group_id,main,alternate,loop_km_main,loop_km_alt,shared_pct_main,shared_pct_alt,zone_km_main,zone_km_alt,reversed_km_main,reversed_km_alt,zone_type,avl_records,main_pct,alt_pct,unassigned_pct,alt_month_min,alt_month_max,busdays_assigned,busdays_both
+1101,1101,1101,110101,47.3,47.4,83.2,83.2,7.9,8.0,7.3,7.3,"same streets, opposite direction",2288740,52.8,46.8,0.4,45.0,48.7,3248,39
+1401,1400,1401,1402,43.2,42.9,81.6,82.1,7.9,7.7,6.5,6.3,"same streets, opposite direction",1881949,50.2,49.4,0.4,48.2,51.5,3006,30
+1801,1801,1801,180101,44.2,43.5,90.9,92.2,4.0,3.4,0.0,0.0,different streets,1724006,54.0,45.0,1.0,43.4,47.4,2564,21
+1802,1802,1802,180201,45.2,44.7,91.6,92.7,3.8,3.2,0.0,0.0,different streets,1634035,50.4,48.2,1.4,46.5,50.6,2330,15

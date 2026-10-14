@@ -1,0 +1,94 @@
+#!/bin/bash
+# =====================================================================
+# jobs/job_report_pack.slrm — arma el material del reporte de tesis POR RUTA
+# =====================================================================
+# Corre package_route_reports.py sobre el árbol de datos del server
+# (/lustre/home/usuario/db/data). Es CPU-only: NO usa GPU/TF, solo agrega en
+# streaming con polars los df_errors/vs_baselines pesados (20-25 GB por ruta)
+# para producir:
+#   · analysis_digest.json + digest_bundle.zip  → liviano, para pasarle a Claude
+#   · <ruta>.zip por ruta                        → artefactos chicos + digest
+# Los parquets pesados NUNCA se copian (son la fuente del digest).
+#
+# Enviar (dos formas):
+#   sbatch jobs/job_report_pack.slrm                       # usa los parámetros de abajo
+#   sbatch jobs/job_report_pack.slrm --routes 101,102,1701 # override + flags extra
+# Flags extra se reenvían a package_route_reports.py (--help para verlos), p. ej.:
+#   sbatch jobs/job_report_pack.slrm --mode digest                 # solo el bundle liviano
+#   sbatch jobs/job_report_pack.slrm --include-df-final            # + dataframes de trips
+#   sbatch jobs/job_report_pack.slrm --include-arrival-pdf --include-maps
+#
+# SEGURO POR DEFAULT (tras el cuelgue de la 1a corrida):
+#   · NO agrega los df_errors del LSTM por leg (20-25 GB c/u; redundante con
+#     vs_baselines). Actívalos solo si de veras los necesitas: --lstm-by-leg
+#   · Omite p50/p90 en parquets > --quantile-max-gb (2 GB) — las holísticas
+#     revientan RAM; mae/rmse/bias/APTA (streaming) SIEMPRE se calculan.
+#   · Escribe el digest tras CADA ruta → un timeout deja resultados parciales.
+#   · --max-agg-gb N salta por completo parquets > N GB (0 = sin límite).
+#
+#SBATCH --job-name=report_pack
+#SBATCH --account=pXXX
+#SBATCH --partition=cpu
+#SBATCH --cpus-per-task=8               # polars streaming escala con cores al leer ~210 GB
+#SBATCH --mem=48G                       # streaming acota RAM; headroom para median/quantile
+#SBATCH --time=04:00:00                 # escanea los parquets pesados una vez; sube si hace falta
+#SBATCH --output=logs/report_pack_%j.out
+#SBATCH --error=logs/report_pack_%j.err
+
+set -uo pipefail
+cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
+[ -f config.env ] && . ./config.env    # PY, DATA_ROOT (con ${VAR:-…}: el entorno gana)
+mkdir -p logs
+
+# ── Parámetros (edítalos, o pásalos por CLI — la CLI gana vía "$@") ────────────
+# ⚠ El default es el data/ de ESTA carpeta (ver job_fleet_concentration.slrm).
+ROOT="${DATA_ROOT:-$(pwd)/data}"       # raíz con 01_raw + 02_interim
+OUT="route_reports"                    # carpeta de salida (usa /scratch si pesa)
+MODE="both"                            # both | digest | zip
+ROUTES="all"                           # all | 101,102,1701
+# Esta corrida produce UNA variante de terminales (AUTO_min → tmin). Pedir t1/t2
+# no rompe nada (se saltan), pero deja avisos de "sin datos" en el log.
+VARIANTS="${VARIANTS:-tmin}"           # variantes de terminales a agregar
+
+# ── Entorno: python por RUTA ABSOLUTA (conda activate FALLA en silencio en los
+#    nodos y cae al .venv equivocado). tf-local trae polars + pyarrow. ──────────
+module purge 2>/dev/null || true
+PY="${PY:-/lustre/home/usuario/.conda/envs/tf-local/bin/python}"
+
+export PYTHONIOENCODING=utf-8
+export PYTHONUNBUFFERED=1               # logs en vivo al .out
+export MPLBACKEND=Agg                   # inofensivo aquí; evita el crash de MPLBACKEND de Jupyter
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+export POLARS_MAX_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+
+# ── Fail-fast: sin polars/pyarrow no hay agregación ───────────────────────────
+"$PY" - <<'PYCHK' || { echo "ERROR: $PY no tiene polars/pyarrow (¿env equivocado?)"; exit 1; }
+import polars, pyarrow
+print("python OK · polars", polars.__version__, "· pyarrow", pyarrow.__version__)
+PYCHK
+
+# ── Diagnóstico ────────────────────────────────────────────────────────────────
+echo "Nodo     : $(hostname)"
+echo "Inicio   : $(date)"
+echo "Python   : $PY"
+echo "Root     : $ROOT"
+echo "Out      : $OUT   mode=$MODE   routes=$ROUTES   variants=$VARIANTS"
+echo "Cores    : ${SLURM_CPUS_PER_TASK:-8}"
+[ -d "$ROOT/01_raw" ] || { echo "ERROR: no existe $ROOT/01_raw"; exit 2; }
+
+# ── Empaquetado. "$@" reenvía overrides/flags (gana sobre los defaults) ────────
+"$PY" -u func/package_route_reports.py \
+    --root "$ROOT" \
+    --out "$OUT" \
+    --mode "$MODE" \
+    --routes "$ROUTES" \
+    --variants "$VARIANTS" \
+    "$@"
+rc=$?
+
+echo "Fin      : $(date)  (rc=$rc)"
+if [ "$rc" -eq 0 ]; then
+    echo "→ Pásale a Claude:  $OUT/digest_bundle.zip"
+    ls -lh "$OUT"/digest_bundle.zip "$OUT"/analysis_digest.json 2>/dev/null
+fi
+exit $rc

@@ -1,0 +1,10 @@
+model,quantity,n_fits,median,p25,p75,min,max,n_at_cap,cap
+xgb_mse,trees selected,175,153.0,126.0,176.0,83.0,341.0,0,600
+xgb_mae,trees selected,175,383.0,326.5,451.0,151.0,600.0,10,600
+xgb_mse_b,trees selected,175,189.0,155.0,232.0,77.0,594.0,2,600
+xgb_mae_b,trees selected,175,503.0,401.5,594.0,247.0,600.0,59,600
+xgb_mae_np,trees selected,175,528.0,434.0,590.0,278.0,600.0,55,600
+xgb_mae_t0,trees selected,175,547.0,457.0,595.0,239.0,600.0,71,600
+lstm_a,epochs trained,175,11.0,9.0,16.0,6.0,30.0,0,40
+lstm_a,best epoch,175,6.0,4.0,11.0,1.0,25.0,0,40
+lstm_a,sequence length (cells),35,428.0,379.0,473.5,219.0,640.0,3,-1

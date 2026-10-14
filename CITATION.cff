@@ -1,0 +1,52 @@
+cff-version: 1.2.0
+message: "If you use this software or its run bundle, please cite it as below, together with the dataset and the article."
+type: software
+title: "Code, protocol and published run for \"Context over capacity\""
+version: 1.0.0
+date-released: "2026-10-14"
+license: MIT
+doi: 10.5281/zenodo.23382640
+repository-code: "https://github.com/felytz/context-over-capacity-code"
+authors:
+  - family-names: Robles-Andrade
+    given-names: Feliciano
+    affiliation: "Department of Mathematics, Universidad de Sonora"
+    orcid: "https://orcid.org/0009-0006-8560-6627"
+  - family-names: Cirett-Galán
+    given-names: Federico
+    affiliation: "Department of Industrial Engineering, Universidad de Sonora"
+    orcid: "https://orcid.org/0000-0003-4477-4430"
+  - family-names: Torres-Peralta
+    given-names: Raquel
+    affiliation: "Department of Industrial Engineering, Universidad de Sonora"
+    orcid: "https://orcid.org/0000-0001-5836-5975"
+keywords:
+  - bus arrival-time prediction
+  - automatic vehicle location
+  - public transport
+  - gradient boosting
+  - LSTM
+  - reproducibility
+references:
+  - type: article
+    title: "Context over capacity: engineered features and operational covariates for bus arrival-time prediction along the route in a Mexican concessioned network"
+    authors:
+      - family-names: Robles-Andrade
+        given-names: Feliciano
+      - family-names: Cirett-Galán
+        given-names: Federico
+      - family-names: Torres-Peralta
+        given-names: Raquel
+    status: in-preparation
+  - type: dataset
+    title: "Hermosillo bus AVL records, route geometry and round trips, January–August 2024"
+    authors:
+      - family-names: Cirett-Galán
+        given-names: Federico
+      - family-names: Robles-Andrade
+        given-names: Feliciano
+      - family-names: Torres-Peralta
+        given-names: Raquel
+    publisher:
+      name: Zenodo
+    doi: 10.5281/zenodo.23384907

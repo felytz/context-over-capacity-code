@@ -1,0 +1,17 @@
+{
+ "route": "1601",
+ "day": "2024-03-24",
+ "weekday": "Sunday",
+ "cut_km": 22.3,
+ "loop_km": 24.751,
+ "stretches": 2,
+ "split_by": {
+  "dia": 1,
+  "hueco": 0,
+  "salto": 1
+ },
+ "round_trips_valid": 11,
+ "pieces_partial": 4,
+ "dur_med_min": 77.2,
+ "other_terminal_km": 9.67
+}

@@ -1,0 +1,190 @@
+#!/bin/bash
+# =====================================================================
+# jobs/job_xgb_prediction.slrm — XGBoost tabular por ruta (paso 12)
+# =====================================================================
+# Corre func/xgb_prediction/run_routes.py, que a su vez lanza run_experiment.py
+# como SUBPROCESO por ruta (una ruta caída no tumba las demás).
+#
+# CPU-ONLY. NO pide GPU: `xgb_prediction` no importa TensorFlow.
+#
+# Lee, por ruta:
+#   data/02_interim/routes/<ruta>/dataframes/df_rec_full_2024_01-08_tmin.parquet
+# Escribe, por ruta:
+#   data/02_interim/routes/<ruta>/xgb/2024_01-08_tmin/leg*_q<NN>_{overall,by_fold,
+#                                             by_position,by_horizon,devhist,importance}.parquet
+#       ↑ `devhist` (fase 5) = histograma de `dev` por (algoritmo, fold), bins de
+#         1 s. De él salen la banda simétrica ±180 s y el on-time calibrado por
+#         sesgo SIN volver a correr (func/honest_metrics.py). Una ruta cuyos
+#         agregados no lo tengan NO se da por hecha; escape:
+#         --accept-missing-devhist.
+#   route_reports/xgb/xgb_status_<rango>_q<NN>.json   (estado, reescrito por ruta)
+#   data/02_interim/routes/<ruta>/frames/<rango>/leg*_q<NN>.parquet
+#       ↑ FRAME DE EVALUACIÓN (func/eval_frame.py): la muestra, la grid, los
+#         cortes y los folds que esta corrida usó. Lo consume el LSTM
+#         (jobs/job_lstm_frame.slrm) para quedar pareado por construcción, sin
+#         el protocolo matched a posteriori. Se escribe siempre salvo --no-frames.
+#
+# ── ENVÍO CANÓNICO (régimen del paper, decidido 2026-07-24) ──────────────────
+#   Ver docs/PLAN_REPRESENTATIVIDAD.md. q=0.05 = soporte común (retiene ~95% de
+#   los viajes en vez del ~6% de q=0.95); min_coverage=1.0 elimina la saturación
+#   de np.interp (target fabricado) y hace que n_pairs cuadre EXACTO con el LSTM.
+#   ESTE JOB VA PRIMERO: escribe los frames que la fase GPU necesita.
+#
+#   sbatch --array=0-34%8 jobs/job_xgb_prediction.slrm \
+#          --n-route-quantile 0.05 --min-coverage 1.0 --max-trips 2500 --exo
+#
+#   # escalera de sensibilidad del cuantil (mismo cov, mismo max_trips)
+#   for Q in 0.10 0.50 0.95; do
+#     sbatch --array=0-34%8 jobs/job_xgb_prediction.slrm \
+#            --n-route-quantile $Q --min-coverage 1.0 --max-trips 2500 --exo
+#   done
+#
+# ── ENVÍO (histórico / otros escenarios) ────────────────────────────────────
+#   # secuencial, todas las rutas, escenario histórico (grid = P95)
+#   sbatch jobs/job_xgb_prediction.slrm
+#
+#   # escenario "soporte común" (grid = P05, retiene ~95% de los viajes)
+#   sbatch jobs/job_xgb_prediction.slrm --n-route-quantile 0.05 --max-trips 2500
+#
+#   # array: una ruta por tarea (recomendado para q=0.05, es mucho más pesado)
+#   sbatch --array=0-34 jobs/job_xgb_prediction.slrm --n-route-quantile 0.05
+#
+#   # FASE 2a · Tier B + baseline estratificado por hora  ← LA CORRIDA PRINCIPAL
+#   # Añade xgb_mse_b / xgb_mae_b (Tier B completo) y `delay_hour`, el `delay`
+#   # con la media histórica condicionada a la hora del día. 9 algoritmos.
+#   # En el piloto `delay_hour` capturó el 82% de la ganancia de Tier B SIN
+#   # modelo, así que es la comparación que decide la narrativa.
+#   sbatch --array=0-34 jobs/job_xgb_prediction.slrm \
+#          --n-route-quantile 0.05 --max-trips 2500 --exo
+#
+#   # FASE 2b · ablación por grupos — atribuye la ganancia de Tier B.
+#   # Añade xgb_mae_{cal,headway,dwell,speed,route} = Tier A + UN grupo. 14
+#   # algoritmos, así que es CARA (~5× el coste de 2a por el peso de KNN/kernel).
+#   # Con un subconjunto de rutas basta para la atribución: no hace falta el
+#   # barrido completo.
+#   sbatch --array=0-7 jobs/job_xgb_prediction.slrm \
+#          --n-route-quantile 0.05 --max-trips 1200 --exo-ablate
+#
+#   # subconjunto / reanudar tras timeout (salta lo ya calculado)
+#   sbatch jobs/job_xgb_prediction.slrm --routes 101,102,201
+#
+# Lo normal es no enviarlo a mano: `run_pipeline.sh` lo encola tres veces
+# (corrida principal, ablación y escalera) y empaqueta al final.
+#
+# ── ⚠ COSTE: LOS BASELINES SON CUADRÁTICOS ──────────────────────────────────
+# KNN y kernel hacen cdist(T_obs, T_train_obs) → matriz (M_val × M_train) por
+# cada posición y fold (arrival_prediction/predictors.py:152 y :196), o sea
+# O(M²·l). XGBoost es lineal en filas. Con q=0.95 la retención es ~6% de los
+# viajes (M~500) y todo es barato; con q=0.05 sube a ~95% (M~7500) y el coste
+# de los baselines se multiplica por ~200×.
+# Dos palancas, y NO son equivalentes:
+#   --max-trips N    submuestrea viajes ANTES de la CV, igual para TODOS los
+#                    algoritmos → la comparación sigue pareada, solo baja el N.
+#   --no-baselines   corre solo las variantes XGB → barato, pero sin nada con
+#                    qué comparar (útil solo si los baselines ya se corrieron).
+#
+#SBATCH --job-name=xgb_pred
+#SBATCH --account=pXXX
+#SBATCH --partition=cpu
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=64G
+#SBATCH --time=12:00:00
+#SBATCH --output=logs/xgb_%j.out
+#SBATCH --error=logs/xgb_%j.err
+
+set -uo pipefail
+cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
+[ -f config.env ] && . ./config.env    # PY, RANGE, régimen (todo con ${VAR:-…}:
+                                       # lo que ya venga del entorno GANA)
+mkdir -p logs route_reports/xgb
+
+RANGE="${BUS_ANALYSIS_RANGE:-2024_01-08_tmin}"
+
+# ── Entorno: python por RUTA ABSOLUTA ────────────────────────────────────────
+# `conda activate tf-local` FALLA EN SILENCIO en los nodos (CONDA_PREFIX se
+# queda en base y `python` cae a ~/db/.venv). Trampa ya documentada.
+module purge 2>/dev/null || true
+# `sbatch --export=ALL` arrastra tu shell: si tenías ~/db/.venv activo, estas
+# tres variables le rompen el import al python de conda.
+unset PYTHONPATH PYTHONHOME VIRTUAL_ENV
+PY="${PY:-/lustre/home/usuario/.conda/envs/tf-local/bin/python}"
+
+export PYTHONIOENCODING=utf-8
+export PYTHONUNBUFFERED=1
+export MPLBACKEND=Agg                       # Jupyter exporta un backend inválido
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-16}"
+export POLARS_MAX_THREADS="${SLURM_CPUS_PER_TASK:-16}"
+
+# ── Fail-fast: xgboost es la dependencia NUEVA de este paso ──────────────────
+"$PY" - <<'PYCHK'
+import sys
+faltan = []
+for m in ("polars", "numpy", "scipy", "xgboost", "sklearn"):
+    try:
+        __import__(m)
+    except ImportError:
+        faltan.append(m)
+if faltan:
+    print("ERROR: al python del job le faltan:", ", ".join(faltan))
+    print("Instálalos en el env (CPU, no toca el build de TF-ROCm):")
+    print("  /lustre/home/usuario/.conda/envs/tf-local/bin/python -m pip install "
+          "'xgboost>=2.0' 'scikit-learn>=1.3'")
+    sys.exit(1)
+import polars, xgboost, sklearn
+print(f"deps OK · polars {polars.__version__} · xgboost {xgboost.__version__} "
+      f"· sklearn {sklearn.__version__}")
+PYCHK
+[ $? -eq 0 ] || exit 1
+
+echo "Nodo   : $(hostname)"
+echo "Inicio : $(date)"
+echo "Python : $PY"
+echo "Rango  : $RANGE"
+echo "CPUs   : ${SLURM_CPUS_PER_TASK:-?}   Mem: ${SLURM_MEM_PER_NODE:-?}"
+
+[ -d "data/02_interim/routes" ] || {
+    echo "ERROR: no existe ./data/02_interim/routes desde $(pwd)."
+    echo "  Envía el job desde la raíz del repo, o exporta BUSONORA_ROOT=/ruta/al/repo."
+    exit 2
+}
+
+# ── Modo array: una ruta por tarea ───────────────────────────────────────────
+# Mismo patrón que job_routes_each.slrm. Las 35 rutas son las de ALL_ROUTES de
+# run_routes.py: con la vuelta entran todas, también la 902 y las 8 variantes
+# (docs/PREREGISTRO_VUELTA.md).
+#
+# ⚠ EL ORDEN TIENE QUE SER IDÉNTICO al de jobs/job_data_pipeline.slrm y
+# jobs/job_lstm_frame.slrm: `--dependency=aftercorr` empareja la tarea k de la GPU
+# con la tarea k de la CPU, así que un orden distinto lanzaría el LSTM de una ruta
+# contra los frames de OTRA y, con --require-frame, saltaría todas sus legs.
+# `run_pipeline.sh` compara las listas antes de encadenar y, si difieren, encadena
+# por array entero. Van por número de línea, cada variante junto a su principal.
+ROUTES=( \
+  101 102 201 202 301 302 401 402 501 601 801 901 902 \
+  1001 1002 1101 110101 1201 1301 1401 1402 1501 1502 \
+  1601 1602 1701 1702 1703 1801 180101 1802 180201 1901 1902 20000 )
+
+ROUTE_ARG=()
+if [ -n "${SLURM_ARRAY_TASK_ID:-}" ]; then
+    IDX="${SLURM_ARRAY_TASK_ID}"
+    if [ "$IDX" -ge "${#ROUTES[@]}" ]; then
+        echo "índice $IDX fuera de rango (${#ROUTES[@]} rutas) — nada que hacer"
+        exit 0
+    fi
+    ROUTE="${ROUTES[$IDX]}"
+    ROUTE_ARG=(--routes "$ROUTE")
+    LOGBASE="logs/xgb_${ROUTE}_${SLURM_ARRAY_JOB_ID:-$$}_${IDX}"
+    exec >>"${LOGBASE}.out" 2>>"${LOGBASE}.err"
+    scontrol update JobId="${SLURM_JOB_ID}" JobName="xgb_${ROUTE}" 2>/dev/null || true
+    echo "Array  : idx=$IDX → ruta $ROUTE"
+fi
+
+"$PY" -u func/xgb_prediction/run_routes.py \
+    --analysis-range "$RANGE" \
+    --out route_reports/xgb \
+    "${ROUTE_ARG[@]}" \
+    "$@"
+rc=$?
+
+echo "Fin    : $(date)  (rc=$rc)"
+exit $rc

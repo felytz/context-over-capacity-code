@@ -1,0 +1,117 @@
+#!/bin/bash
+# =====================================================================
+# jobs/job_appendices.slrm — Apéndices A, C y D (CPU)
+# =====================================================================
+# Los tres barridos de sensibilidad del paper. NO son parte de la cadena
+# principal: leen los dataframes de la fase 0 y no tocan nada de predicción, así
+# que pueden correr en paralelo con las fases 1-3 o mucho después.
+#
+#   Apéndice A · representatividad de la grid
+#       docs/paper/analysis/grid_representativity.py
+#       ¿qué fracción de viajes retiene la grid para cada (q, min_coverage)?
+#       Es la justificación cuantitativa de q=0.05 + cov=1.0: con q=0.95 la
+#       matriz retenía la mediana del 7% de los viajes por leg.
+#       Salida: docs/paper/analysis/grid_representativity.{csv,md}
+#
+#   Apéndice C · sensibilidad del conteo de terminales al radio ε
+#       docs/paper/analysis/terminal_eps_sensitivity.py
+#       Barre el ε del DBSCAN de stay-points de 40 a 200 m. ⚠ Es esta capa
+#       (ε=80 m + dominancia AUTO_min) la que fija el CONTEO de terminales; la
+#       de reversión (ε=150 m) solo LOCALIZA las zonas de vuelta. Los dos radios
+#       no son intercambiables y el manuscrito los confundía.
+#       Salida: docs/paper/analysis/terminal_eps_sensitivity.{csv,md}
+#
+#   Apéndice D · sensibilidad del detector de reversión
+#       docs/paper/analysis/reversal_params_sensitivity.py
+#       27 rutas × 34 configuraciones = 918 filas, sobre una ventana de 30 días
+#       porque el detector es O(n²) (~10 min por configuración a rango
+#       completo). Mide la SALIDA DEL DETECTOR, no las legs construidas:
+#       propagar hasta el sample exigiría re-correr build_trips por
+#       configuración, que es otro experimento y mucho más caro.
+#       Salida: docs/paper/analysis/reversal_params_sensitivity.csv
+#               + appendix_d_reversal_params.md con --merge
+#
+# ── ENVÍO ────────────────────────────────────────────────────────────────────
+#   sbatch jobs/job_appendices.slrm            # los tres
+#   APPENDICES=A sbatch jobs/job_appendices.slrm     # solo uno (A | C | D)
+#   APPENDICES=A,C sbatch jobs/job_appendices.slrm
+#
+# Requiere que la fase 0 haya terminado: los tres leen
+# data/02_interim/routes/<ruta>/dataframes/df_rec_clean_<RANGE>.parquet
+# (el A lee además df_rec_full).
+#
+#SBATCH --job-name=appendices
+#SBATCH --account=pXXX
+#SBATCH --partition=cpu
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=12:00:00
+#SBATCH --output=logs/appendices_%j.out
+#SBATCH --error=logs/appendices_%j.err
+
+set -uo pipefail
+cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
+[ -f config.env ] && . ./config.env
+mkdir -p logs docs/paper/analysis docs/paper/tables
+
+module purge 2>/dev/null || true
+unset PYTHONPATH PYTHONHOME VIRTUAL_ENV
+PY="${PY:-/lustre/home/usuario/.conda/envs/tf-local/bin/python}"
+
+export PYTHONIOENCODING=utf-8
+export PYTHONUNBUFFERED=1
+export MPLBACKEND=Agg
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+export POLARS_MAX_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+
+# Con la vuelta (TRIP_CUT=cruce, rama `vuelta`) el detector de terminales ya no corta
+# los viajes: C y D medirían algo que no decide nada, así que por defecto sólo va A.
+# La sensibilidad que cuenta ahora es la del punto de corte (docs/PREREGISTRO_VUELTA.md;
+# las Tablas S4-S5 nuevas, que arma make_appendices.py en local con cortes/ y la evidencia
+# versionada: no hace falta job). Se pueden pedir igual con APPENDICES=A,C,D.
+# El A recorre las 35 rutas de audit_run.ROUTES (hasta la fase 1b, sólo las 26 de
+# agosto: en el piloto del 7-oct se saltó la 902 y la 1801-ALT).
+if [ "${TRIP_CUT:-}" = "cruce" ]; then
+    APPENDICES="${APPENDICES:-A}"
+else
+    APPENDICES="${APPENDICES:-A,C,D}"
+fi
+A_DIR=docs/paper/analysis
+
+echo "Nodo   : $(hostname)"
+echo "Inicio : $(date)"
+echo "Python : $PY"
+echo "Pide   : apéndices $APPENDICES"
+
+[ -d data/02_interim/routes ] || {
+    echo "✗ no existe data/02_interim/routes — corre antes la fase 0"; exit 2; }
+
+rc=0
+case ",$APPENDICES," in *,A,*)
+    echo; echo "── Apéndice A · representatividad de la grid ──────────────"
+    "$PY" -u "$A_DIR/grid_representativity.py" \
+        --routes all --qs 0.05,0.10,0.50,0.95 --min-coverage 1.0 --also-cov 0.99 \
+        || rc=$?
+esac
+case ",$APPENDICES," in *,C,*)
+    echo; echo "── Apéndice C · ε de los stay-points ─────────────────────"
+    "$PY" -u "$A_DIR/terminal_eps_sensitivity.py" --routes all || rc=$?
+esac
+case ",$APPENDICES," in *,D,*)
+    echo; echo "── Apéndice D · parámetros del detector de reversión ─────"
+    # --days 30: el detector es O(n²). A rango completo son ~10 min POR
+    # configuración, y son 34 por ruta.
+    "$PY" -u "$A_DIR/reversal_params_sensitivity.py" --routes all --days 30 || rc=$?
+    # --merge redacta el .md del apéndice a partir del CSV. El apéndice se
+    # GENERA, no se edita a mano.
+    "$PY" -u "$A_DIR/reversal_params_sensitivity.py" \
+        --merge "$A_DIR/reversal_params_sensitivity.csv" || rc=$?
+esac
+
+echo
+echo "Fin    : $(date)  (rc=$rc)"
+echo "→ Bajar a la máquina local (pesan KB):"
+echo "     $A_DIR/grid_representativity.{csv,md}"
+echo "     $A_DIR/terminal_eps_sensitivity.{csv,md}"
+echo "     $A_DIR/reversal_params_sensitivity.csv"
+exit $rc

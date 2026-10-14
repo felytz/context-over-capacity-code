@@ -1,0 +1,53 @@
+# requirements-server.txt — dependencias del SERVIDOR, sin TensorFlow
+# =====================================================================
+# ⚠ TensorFlow NO está aquí, a propósito. En una MI210 hace falta el build de
+#   ROCm, que no sale de PyPI sino de una rueda de AMD atada a la versión de
+#   ROCm del sistema y al minor de Python:
+#
+#     pip install https://repo.radeon.com/rocm/manylinux/rocm-rel-6.4.2/\
+#     tensorflow_rocm-2.18.1-cp310-cp310-manylinux_2_28_x86_64.whl
+#
+#   Un `pip install tensorflow` a secas instala el build de CUDA, tapa el de
+#   ROCm y la GPU deja de verse. Ver ENVIRONMENT.md.
+#
+# Uso:
+#     conda create -y -n tf-local python=3.10 && conda activate tf-local
+#     python -m pip install <rueda de ROCm>
+#     python -m pip install -r requirements-server.txt
+#
+# Las versiones son las de la corrida publicada (RUNINFO_q05c100.txt del
+# bundle, 9-oct-2026). Se fijan con == para que las diferencias entre corridas sean
+# atribuibles al no-determinismo de la GPU y no a un cambio de librería.
+# Para instalar lo último, cambia == por >=.
+
+# ── Núcleo: fases 0 y 1 ────────────────────────────────────────────
+polars==1.41.2
+numpy==1.26.4          # <2 — es lo que traía el env de TF 2.18
+scipy==1.15.3
+pandas==2.3.2
+pyarrow==21.0.0
+
+# ── Geometría y hexágonos (fase 0; h3 entra por _lib_turn_hex) ─────
+h3==4.3.1
+folium==0.20.0         # solo mapas; esta corrida va con --no-maps
+
+# ── Gráficas ───────────────────────────────────────────────────────
+matplotlib==3.10.6     # con MPLBACKEND=Agg; los jobs lo exportan
+plotly==6.7.0          # solo dashboards; esta corrida va con --no-dashboards
+
+# ── Modelo tabular: fase 1 ─────────────────────────────────────────
+# Las versiones son las que registra el RUNINFO del bundle publicado: otra
+# versión de xgboost mueve algunos pares (ruta, modelo) por debajo del segundo.
+xgboost==3.2.0
+scikit-learn==1.7.2
+
+# ── Opcionales ─────────────────────────────────────────────────────
+# psutil: TODOS sus usos están en try/except. Sin él, perf_*.json sale sin
+# `peak_rss_gb` ni `--mem sugerido`. El env que produjo el paper NO lo tenía.
+psutil>=5.9
+
+# sqlalchemy + pg8000: solo para descargar extractos de la base de datos. Esta
+# carpeta parte de data/01_raw, así que no hacen falta. Se dejan por si hay que
+# regenerar un extracto.
+sqlalchemy==2.0.43
+pg8000==1.31.5

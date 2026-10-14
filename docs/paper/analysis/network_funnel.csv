@@ -1,0 +1,5 @@
+stage,ids,base_routes,source,note
+Route identifiers in the portal's stop inventory,46,39,stops_routes.json,ordered stop sequence per route; the widest universe the portal publishes
+…with route geometry,43,39,segments_route.json,"the three without geometry are university variants: 1101-UI, 1801-UI, 1802-UI"
+…with AVL records compiled for the analysis window,35,32,records/<route>/,the one cut; no identifier with AVL lacks geometry or stops. 8 of them are variants separated vehicle by vehicle from 4 route codes under which the AVL records both services
+Processed end-to-end by the pipeline,35,32,Table 1,every route with AVL was processed

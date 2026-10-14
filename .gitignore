@@ -1,0 +1,28 @@
+__pycache__/
+*.pyc
+.venv/
+
+# Datos crudos y artefactos derivados: NO van en git. Se descargan aparte
+# (data/01_raw/README.md, artefacts/README.md) y se verifican con sus sumas sha256.
+data/01_raw/*
+!data/01_raw/README.md
+data/02_interim/
+data/03_processed/
+!data/**/.gitkeep
+artefacts/*
+!artefacts/README.md
+!artefacts/MANIFEST.sha256
+# La separación de las variantes (func/variantes/) lee y escribe con la estructura del
+# test: sus datos y reportes no van en git (func/variantes/README.md).
+func/variantes/data/
+func/variantes/reports/
+
+# Salidas de corrida
+logs/
+route_reports/*
+!route_reports/.gitkeep
+results/*
+!results/.gitkeep
+*.tgz
+*.zip
+RUNINFO_*.txt

@@ -1,0 +1,166 @@
+#!/bin/bash
+# =====================================================================
+# jobs/job_lstm_frame.slrm — LSTM sobre el FRAME de evaluación único (GPU)
+# =====================================================================
+# Corre func/lstm_prediction_tf/run_frame.py: el LSTM sobre EXACTAMENTE los
+# mismos viajes, la misma grid, los mismos cortes y los mismos folds que los
+# baselines y XGBoost (frame de `func/eval_frame.py`).
+#
+# Por qué existe: en la corrida certificada el LSTM NO pasaba por el filtro de
+# cobertura (entrenaba con ~7,700 viajes/leg contra ~491 de los baselines) y
+# particionaba por trip_id ordenado en vez de por fila de T. La comparación
+# requería el protocolo matched a posteriori (idx_off / dt_rem, saga v6/v7). Con
+# el frame la paridad es por construcción: n_pairs coincide EXACTO (verificado
+# en 1601/T1->T0: 128,266 por los dos caminos).
+#
+# ⚠ ORDEN OBLIGATORIO: primero la fase CPU (jobs/job_xgb_prediction.slrm), que
+# escribe los frames; después este job con --require-frame. Si el frame no
+# existe, la leg se salta en vez de construir uno que podría divergir.
+#
+# ⚠ COSTO: en agosto, ~1.4 h-GPU por leg en el piloto de la fase 4 (2,500 viajes;
+# 88 legs ≈ 120 h-GPU), y en la corrida `es15` ≈ 17 h-GPU para 42 legs. Con la vuelta
+# son 35 legs, una por ruta, con el doble de celdas: el piloto en el servidor fija
+# el coste (Plan_nueva_corrida_articulo.md, fase 3). Por eso va en --array con UNA
+# RUTA POR TAREA y concurrencia limitada.
+#
+# Orden de las rutas: el mismo de jobs/job_data_pipeline.slrm y
+# jobs/job_xgb_prediction.slrm (por número de línea, cada variante junto a su
+# principal), porque `aftercorr` empareja la tarea k de cada array. Con la vuelta
+# no hay estratos (en agosto: validated → group B → N=1).
+#
+# ── ENVÍO ────────────────────────────────────────────────────────────────────
+#   # las 35 rutas, 4 a la vez (lo que encola run_pipeline.sh)
+#   sbatch --array=0-34%4 jobs/job_lstm_frame.slrm --require-frame --es-frac 0.15
+#
+#   # una ruta concreta a mano
+#   BUS_ROUTE=101 sbatch --array=0-0 jobs/job_lstm_frame.slrm --require-frame
+#
+# ⚠ Con la vuelta NO va `--directional-only`: la única leg es `T0->T0` y el filtro
+# la saltaría (run_frame.py sale con rc=4 si no calcula ninguna leg).
+#
+# Es REANUDABLE: cada leg terminada deja `<leg>_q05_overall.parquet` y se salta
+# al relanzar. Un timeout de SLURM se recupera con el MISMO comando.
+#
+# ⚠ Una leg sin `_devhist.parquet` o sin `_by_horizon.parquet` NO cuenta como
+#   hecha. Sin el histograma de `dev` no hay banda simétrica ni on-time
+#   calibrado; sin el desglose por horizonte no hay §4.5. Ninguno de los dos se
+#   puede reconstruir después, porque el CV borra sus checkpoints al terminar.
+#   Las legs corridas antes del 2026-07-25 se recalculan solas; para conservarlas
+#   tal cual, `--accept-missing-devhist`.
+#
+# Salidas: data/02_interim/routes/<ruta>/lstm_frame/<rango>/
+#            <leg>_q05_overall.parquet      (una fila; mismo schema que xgb)
+#            <leg>_q05_by_fold.parquet
+#            <leg>_q05_by_position.parquet  (l_idx YA en coordenadas de frame)
+#            <leg>_q05_devhist.parquet      (histograma de dev por fold, bins 1 s)
+#            <leg>_q05_by_horizon.parquet   (métricas por bin de tiempo restante)
+#            <leg>_q05_meta.json            (incluye frame_hash y cuts_match_frame)
+#
+# Al terminar, empaquetar (son KB):
+#   tar -czf ~/lstm_frame.tgz \
+#       $(ls -d data/02_interim/routes/*/lstm_frame 2>/dev/null) logs/lstm_fr_*.out
+#
+#SBATCH --job-name=lstm_fr
+#SBATCH --account=pXXX
+#SBATCH --partition=gpu
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=48G
+#SBATCH --time=24:00:00
+#SBATCH --output=logs/lstm_fr_%A_%a.out
+#SBATCH --error=logs/lstm_fr_%A_%a.err
+
+set -uo pipefail
+cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
+[ -f config.env ] && . ./config.env    # PY, RANGE, régimen (todo con ${VAR:-…}:
+                                       # lo que ya venga del entorno GANA)
+mkdir -p logs
+
+# Las 35 rutas, en el MISMO orden que los otros dos arrays (ver arriba).
+ROUTES=( \
+  101 102 201 202 301 302 401 402 501 601 801 901 902 \
+  1001 1002 1101 110101 1201 1301 1401 1402 1501 1502 \
+  1601 1602 1701 1702 1703 1801 180101 1802 180201 1901 1902 20000 )
+
+if [ -n "${SLURM_ARRAY_TASK_ID:-}" ]; then
+    IDX="${SLURM_ARRAY_TASK_ID}"
+    if [ "$IDX" -ge "${#ROUTES[@]}" ]; then
+        echo "índice $IDX fuera de rango (${#ROUTES[@]} rutas)"; exit 0
+    fi
+    ROUTE="${BUS_ROUTE:-${ROUTES[$IDX]}}"
+    LOGBASE="logs/lstm_fr_${ROUTE}_${SLURM_ARRAY_JOB_ID:-$$}_${IDX}"
+    exec >>"${LOGBASE}.out" 2>>"${LOGBASE}.err"
+    scontrol update JobId="${SLURM_JOB_ID}" JobName="lstm_fr_${ROUTE}" 2>/dev/null || true
+else
+    ROUTE="${BUS_ROUTE:?define BUS_ROUTE o usa --array}"
+fi
+
+RANGE="${BUS_ANALYSIS_RANGE:-2024_01-08_tmin}"
+
+# ── Entorno GPU: TF-ROCm por RUTA ABSOLUTA ───────────────────────────────────
+# `conda activate` FALLA en silencio en los nodos → el LSTM caería a CPU (~29
+# min/época, la GPU ociosa). Trampa ya documentada.
+module purge 2>/dev/null || true
+module load rocm/6.4.3 2>/dev/null || true
+unset PYTHONPATH PYTHONHOME VIRTUAL_ENV      # que no se cuele ~/db/.venv
+PY="${PY:-/lustre/home/usuario/.conda/envs/tf-local/bin/python}"
+
+export BUS_ROUTE="$ROUTE"
+export BUS_ANALYSIS_RANGE="$RANGE"
+export PYTHONIOENCODING=utf-8
+export PYTHONUNBUFFERED=1
+export MPLBACKEND=Agg                        # Jupyter exporta un backend inválido
+export TF_CPP_MIN_LOG_LEVEL=2
+export TF_FORCE_GPU_ALLOW_GROWTH=true
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+export POLARS_MAX_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+export LSTM_TF_CACHE_DIR="${TMPDIR:-/tmp}/lstm_fr_cache_${SLURM_JOB_ID:-$$}"
+
+echo "Nodo    : $(hostname)"
+echo "Inicio  : $(date)"
+echo "Ruta    : $ROUTE   Rango: $RANGE"
+
+# ── Guard anti-CPU: aborta si TF no ve la GPU (el LSTM en CPU son DÍAS) ──────
+_gpuout="$("$PY" -c "import tensorflow as tf; print('TFOK', tf.__version__, len(tf.config.list_physical_devices('GPU')))" 2>&1)"; _grc=$?
+_ngpu="$(printf '%s' "$_gpuout" | sed -n 's/^TFOK [^ ]* \([0-9]*\)$/\1/p' | tail -1)"
+echo "TF chk  : rc=$_grc · gpus=${_ngpu:-?}"
+if [ "$_grc" -ne 0 ] || [ -z "$_ngpu" ] || [ "$_ngpu" = "0" ]; then
+    echo "── salida real del chequeo de TF ──"; printf '%s\n' "$_gpuout"
+    echo "✗ ABORTA: '$PY' no importó TF o no ve GPU. El LSTM en CPU es inviable."
+    exit 1
+fi
+
+# ── Guard de frames: avisa (no aborta) si la fase CPU no pasó por esta ruta ──
+# ⚠ NO filtrar por un sufijo fijo: el nombre lleva el régimen COMPLETO
+# (`q05` con la cobertura histórica 0.99, `q05c100` con 1.0 — ver
+# eval_frame.q_tag). Un glob de `*_q05.parquet` daba falsa alarma en todas las
+# rutas cuando la fase CPU corrió con --min-coverage 1.0. Se listan los regímenes
+# presentes y que el python decida cuál pide.
+FRAMES_DIR="data/02_interim/routes/${ROUTE}/frames/${RANGE}"
+N_FRAMES="$(ls "${FRAMES_DIR}"/*.parquet 2>/dev/null | wc -l)"
+REGIMES="$(ls "${FRAMES_DIR}"/*.parquet 2>/dev/null \
+           | sed -n 's/.*_\(q[0-9]*c\{0,1\}[0-9]*\)\.parquet$/\1/p' \
+           | sort -u | tr '\n' ' ')"
+echo "Frames  : ${N_FRAMES} en ${FRAMES_DIR}  ·  regímenes: ${REGIMES:-ninguno}"
+if [ "${N_FRAMES}" = "0" ]; then
+    echo "✗ No hay NINGÚN frame para la ruta ${ROUTE}."
+    echo "  Corre primero jobs/job_xgb_prediction.slrm con"
+    echo "  --n-route-quantile 0.05 --min-coverage 1.0"
+    # Con --require-frame no habría NADA que hacer: run_frame saltaría todas las
+    # legs y el job saldría con rc=0, o sea verde. Ese silencio es justo el fallo
+    # que ya nos costó una corrida entera (HANDOFF_FRAME.md §5.3): la fase GPU
+    # "terminó bien" sin haber entrenado un solo modelo. Mejor rojo y a la vista.
+    case " $* " in
+        *" --require-frame "*)
+            echo "  --require-frame está activo ⇒ ABORTA en vez de salir en verde."
+            exit 3 ;;
+    esac
+    echo "  (sin --require-frame se construirán aquí; ojo con divergencias)"
+fi
+
+"$PY" -u func/lstm_prediction_tf/run_frame.py "$@"
+rc=$?
+
+echo "Fin     : $(date)  (rc=$rc)"
+rm -rf "$LSTM_TF_CACHE_DIR" 2>/dev/null || true
+exit $rc

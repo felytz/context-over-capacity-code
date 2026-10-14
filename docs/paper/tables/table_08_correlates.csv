@@ -1,0 +1,13 @@
+gain,property,n,rho,p
+MAE advantage vs. best tabular (%),"Round-trip length (grid extent, m)",35,0.054769576108130234,0.7546695003518654
+MAE advantage vs. best tabular (%),Grid retention (%),35,-0.0313835395783684,0.8579624538253607
+MAE advantage vs. best tabular (%),Round trips modeled,35,-0.2829131652661065,0.09960099368318687
+MAE advantage vs. best tabular (%),Trip-cut coverage (%),35,-0.01568627450980392,0.928735153432314
+MAE advantage vs. best tabular (%),Route fleet size,35,-0.196245974750615,0.25853023718918117
+MAE advantage vs. best tabular (%),Record retention (%),35,0.2005742703987254,0.24796520938360853
+Centred on-time advantage (pp),"Round-trip length (grid extent, m)",35,0.006163328257692406,0.9719690709106468
+Centred on-time advantage (pp),Grid retention (%),35,-0.024798600470407172,0.8875508464403615
+Centred on-time advantage (pp),Round trips modeled,35,-0.1893557422969188,0.27595426029369463
+Centred on-time advantage (pp),Trip-cut coverage (%),35,-0.010924369747899159,0.9503366414128718
+Centred on-time advantage (pp),Route fleet size,35,-0.10743801758295624,0.5390101948173681
+Centred on-time advantage (pp),Record retention (%),35,0.09524476527313777,0.5862683686335248

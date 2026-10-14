@@ -1,0 +1,5 @@
+level,algorithm,adds,n_legs,mae_min,rel_pct,improved,p,share_pct
+0 · current-trip only,xgb_mae_t0,"the trip's own distance–time trace on the grid, and nothing estimated from other trips",35,3.6554398353712108,,,,
+1 · + delay vs. mean profile,xgb_mae_np,one historical hook: the trip's current deviation from the training fold's mean profile,35,3.651552672490489,0.007645769872272371,17,0.16330995067255571,1.0552210850909072
+2 · + historical conditioning,xgb_mae,the full distribution of remaining time by position and horizon,35,3.522736805664911,-2.871073858751639,35,5.820766091346741e-11,34.96874788621691
+3 · + operational context,xgb_mae_b,"calendar, headway ahead and behind, dwell, recent speed and route position",35,3.2870655737455845,-6.038302611357476,35,5.820766091346741e-11,63.976031028692184

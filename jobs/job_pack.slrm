@@ -1,0 +1,223 @@
+#!/bin/bash
+# =====================================================================
+# jobs/job_pack.slrm — UN tarball con todo lo que el análisis local necesita
+# =====================================================================
+# Último job de `run_pipeline.sh` (corre cuando todo lo demás terminó, haya
+# salido bien o no). Deja
+#
+#     data/03_processed/run_bundle_<TAG>_<fecha>.tgz
+#
+# con el mismo árbol que los paquetes publicados de artefacts/, de modo que en
+# local basta con descomprimirlo ahí y correr
+#
+#     python reproduce_tables.py --run artefacts/run_bundle_<TAG>_<fecha>
+#
+# Contenido (pesa unos cientos de MB; lo pesado, data/02_interim, se queda):
+#   data/02_interim/routes/*/{frames,xgb,lstm_frame}/<RANGE>/*<TAG>*   resultados
+#   data/02_interim/routes/*/perf/*<RANGE>*.json                       funnel por ruta
+#   route_reports/  digest (Tablas 1 y S2), flota (Tabla S2), estado de los jobs
+#   docs/paper/analysis/{grid_representativity,terminal_eps_sensitivity,
+#                        reversal_params_sensitivity}.*                apéndices
+#   logs/  (.out y .err: el traceback cae en el .err)
+#   config.env + RUNINFO_<TAG>.txt   el régimen y el intérprete exactos
+#
+# Sale en ROJO (el paquete se genera igual) si:
+#   rc=5 · INTEGRIDAD  algún parquet no se lee. Un parquet truncado pasa por
+#          presente y la reanudación lo da por hecho para siempre: BÓRRALO en el
+#          árbol vivo y vuelve a lanzar `bash run_pipeline.sh --skip-data`.
+#   rc=4 · FRESCURA    algún `_overall` no tiene su `_devhist` y su
+#          `_by_horizon` al lado: huella de un artefacto viejo que no se rehízo.
+#          O el `funnel_<RANGE>.json` de una ruta falta o es más viejo que su
+#          `df_final`: la corrida murió entre el paso 4 y el 7 y el digest
+#          mezclaría dos corridas. Relanza su job de datos (reusa las cachés),
+#          `sbatch --array=<idx> jobs/job_data_pipeline.slrm`, rehaz el digest
+#          (`sbatch jobs/job_report_pack.slrm --mode digest`) y empaqueta otra vez.
+#
+# A mano:  sbatch jobs/job_pack.slrm      (o `bash jobs/job_pack.slrm`)
+#
+#SBATCH --job-name=pack
+#SBATCH --account=pXXX
+#SBATCH --partition=cpu
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=8G
+#SBATCH --time=01:00:00
+#SBATCH --output=logs/pack_%j.out
+#SBATCH --error=logs/pack_%j.err
+
+set -uo pipefail
+cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
+[ -f config.env ] && . ./config.env    # PY, TAG, RANGE (con ${VAR:-…}: el entorno gana)
+export PYTHONIOENCODING=utf-8
+unset PYTHONPATH PYTHONHOME VIRTUAL_ENV
+
+RANGE="${RANGE:-2024_01-08_tmin}"
+TAG="${TAG:-q05c100}"
+STAMP="$(date +%Y%m%d_%H%M%S)"
+OUT="${OUT:-data/03_processed/run_bundle_${TAG}_${STAMP}.tgz}"
+INFO="RUNINFO_${TAG}.txt"
+PYB="python3"; [ -x "${PY:-}" ] && PYB="$PY"
+
+echo "Nodo   : $(hostname)"
+echo "Rango  : $RANGE   ·   Régimen: $TAG"
+echo "Salida : $OUT"
+
+[ -d data/02_interim/routes ] || {
+    echo "✗ no existe ./data/02_interim/routes — ¿lo corres desde la raíz?"; exit 2; }
+
+mkdir -p data/03_processed
+LIST="$(mktemp)"; BROKEN="$(mktemp)"; STALE="$(mktemp)"; STALE_F="$(mktemp)"
+trap 'rm -f "$LIST" "$BROKEN" "$STALE" "$STALE_F" "$INFO"' EXIT
+
+add() {  # add <descripción> <find…>
+    local label="$1"; shift
+    local before after
+    before=$(wc -l < "$LIST")
+    "$@" 2>/dev/null >> "$LIST"
+    after=$(wc -l < "$LIST")
+    printf '  %-34s %5d\n' "$label" "$((after - before))"
+}
+
+echo
+echo "── recogiendo ────────────────────────────────────────────"
+for fam in frames xgb lstm_frame; do
+    add "$fam/" find data/02_interim/routes -type f -path "*/${fam}/${RANGE}/*${TAG}*"
+done
+add "perf/ (funnel + perf json)" \
+    find data/02_interim/routes -type f -path "*/perf/*${RANGE}*.json"
+add "route_reports/ (digest, flota, estado)" \
+    find route_reports -type f \( -name '*.json' -o -name '*.csv' \)
+add "docs/paper/analysis/ (apéndices)" \
+    find docs/paper/analysis -maxdepth 1 -type f \
+        \( -name 'grid_representativity.*' -o -name 'terminal_eps_sensitivity.*' \
+           -o -name 'reversal_params_sensitivity.csv' \)
+add "logs/" find logs -maxdepth 1 -type f \( -name '*.out' -o -name '*.err' \)
+[ -f config.env ] && echo config.env >> "$LIST"
+
+N_FILES="$(sort -u "$LIST" | tee "$LIST.u" | wc -l)"; mv "$LIST.u" "$LIST"
+[ "$N_FILES" -gt 0 ] || { echo "✗ no hay nada que empaquetar"; exit 3; }
+
+# ── Integridad: ¿se LEE cada parquet? ────────────────────────────────────────
+# `is_file()` no distingue un parquet truncado (Lustre dejó una vez 11 con la
+# cola en ceros); parquet_guard lee la envoltura PAR1…PAR1 de verdad.
+grep '\.parquet$' "$LIST" \
+    | "$PYB" -c '
+import sys
+sys.path.insert(0, "func")
+import parquet_guard as pg
+for line in sys.stdin:
+    p = line.rstrip("\n")
+    why = pg.parquet_problem(p)
+    if why:
+        print(f"{p}: {why}")
+' > "$BROKEN" 2>/dev/null || echo "(no se pudo verificar con $PYB)" > "$BROKEN"
+N_BROKEN="$(grep -c . "$BROKEN" || true)"
+
+# ── Frescura: `_overall` sin su `_devhist` o su `_by_horizon` ────────────────
+# Un artefacto ilegible cuenta como ausente.
+_usable() { [ -f "$1" ] && ! grep -qF "$1:" "$BROKEN"; }
+while IFS= read -r ov; do
+    case "$ov" in *_overall.parquet) ;; *) continue ;; esac
+    dh="${ov%_overall.parquet}_devhist.parquet"
+    bh="${ov%_overall.parquet}_by_horizon.parquet"
+    if ! _usable "$dh" || ! _usable "$bh"; then echo "$ov" >> "$STALE"; fi
+done < "$LIST"
+N_STALE="$(grep -c . "$STALE" || true)"
+
+# ── Frescura del funnel: ¿salió de la MISMA corrida que df_final? ────────────
+# El digest (Tablas 1 y S2) toma el funnel de perf/funnel_<RANGE>.json (paso 7)
+# y los viajes de dataframes/df_final_new_trips_<RANGE>.parquet (paso 4), sin
+# comprobar que sean de la misma corrida. Si una corrida muere entre ambos —o
+# falla el `try` que escribe el funnel— queda el funnel anterior junto a un
+# df_final nuevo: así llegó a la Tabla S2 una fila de la 902 previa al fix del
+# corte. Se mira el árbol vivo: df_final no viaja en el paquete.
+for df in data/02_interim/routes/*/dataframes/df_final_new_trips_"${RANGE}".parquet; do
+    [ -f "$df" ] || continue
+    fj="${df%/dataframes/*}/perf/funnel_${RANGE}.json"
+    if [ ! -f "$fj" ]; then
+        echo "$fj: no existe (df_final sí)" >> "$STALE_F"
+    elif [ "$fj" -ot "$df" ]; then
+        echo "$fj: más viejo que su df_final" >> "$STALE_F"
+    fi
+done
+N_STALE_F="$(grep -c . "$STALE_F" || true)"
+
+# ── RUNINFO ──────────────────────────────────────────────────────────────────
+_count() { grep -c "$1" "$LIST" || true; }
+{
+    echo "paquete  : $(basename "$OUT")"
+    echo "generado : $(date -Is)   en $(hostname)   por $(whoami)"
+    echo "origen   : $(pwd)   commit $(git rev-parse --short HEAD 2>/dev/null || echo 'sin-git')"
+    echo "rango    : $RANGE"
+    echo "régimen  : $TAG"
+    echo
+    echo "archivos                 : $N_FILES"
+    echo "frames  meta.json        : $(_count "/frames/${RANGE}/.*_meta\.json$")"
+    echo "xgb     overall/devhist  : $(_count "/xgb/${RANGE}/.*_overall\.parquet$") / $(_count "/xgb/${RANGE}/.*_devhist\.parquet$")"
+    echo "lstm    overall/devhist  : $(_count "/lstm_frame/${RANGE}/.*_overall\.parquet$") / $(_count "/lstm_frame/${RANGE}/.*_devhist\.parquet$")"
+    echo "by_horizon xgb/lstm      : $(_count "/xgb/${RANGE}/.*_by_horizon\.parquet$") / $(_count "/lstm_frame/${RANGE}/.*_by_horizon\.parquet$")"
+    echo "funnel/perf json         : $(_count "/perf/.*\.json$")"
+    echo "digest por ruta          : $(_count "^route_reports/routes/.*\.json$")"
+    echo "logs                     : $(_count "^logs/")"
+    echo
+    if [ "$N_BROKEN" -eq 0 ]; then
+        echo "INTEGRIDAD: OK — todos los parquet se leen"
+    else
+        echo "INTEGRIDAD: ✗ $N_BROKEN corrupto(s). Bórralos en el árbol vivo y"
+        echo "vuelve a lanzar \`bash run_pipeline.sh --skip-data\`:"
+        sed 's/^/  /' "$BROKEN"
+    fi
+    if [ "$N_STALE" -eq 0 ]; then
+        echo "FRESCURA  : OK — todo _overall tiene su _devhist y su _by_horizon"
+    else
+        echo "FRESCURA  : ⚠ $N_STALE _overall sin _devhist o sin _by_horizon:"
+        sed 's/^/  /' "$STALE"
+    fi
+    if [ "$N_STALE_F" -eq 0 ]; then
+        echo "FUNNEL    : OK — cada funnel es posterior a su df_final"
+    else
+        echo "FUNNEL    : ⚠ $N_STALE_F ruta(s) con el funnel de otra corrida (el digest"
+        echo "mezclaría dos corridas en las Tablas 1 y S2). Relanza su job de datos"
+        echo "(\`sbatch --array=<idx> jobs/job_data_pipeline.slrm\`), rehaz el digest"
+        echo "(\`sbatch jobs/job_report_pack.slrm --mode digest\`) y empaqueta otra vez:"
+        sed 's/^/  /' "$STALE_F"
+    fi
+    echo
+    echo "── intérprete ──"
+    "$PYB" -c "
+import sys
+print(' python', sys.version.split()[0], '·', sys.executable)
+for m in ('polars','numpy','scipy','pyarrow','xgboost','sklearn'):
+    try:
+        mod = __import__(m); print(f'  {m:10s} {getattr(mod, \"__version__\", \"?\")}')
+    except ImportError:
+        print(f'  {m:10s} (ausente)')
+" 2>&1
+    echo
+    echo "── config.env vigente ──"
+    grep -vE '^\s*#|^\s*$' config.env 2>/dev/null | sed 's/^/  /'
+} > "$INFO"
+echo "$INFO" >> "$LIST"
+echo
+cat "$INFO"
+
+# ── Empaquetar ───────────────────────────────────────────────────────────────
+rm -f "$OUT"
+tar -czf "$OUT" -T "$LIST"; rc=$?
+[ "$rc" -eq 0 ] && [ -f "$OUT" ] || { echo "✗ el tar falló"; exit 1; }
+
+NAME="$(basename "$OUT" .tgz)"
+echo
+ls -lh "$OUT"
+cat <<EOF
+
+─────────────────────────────────────────────────────────────────────
+  En tu máquina:
+
+    scp servidor:$(pwd)/$OUT .
+    mkdir -p artefacts/$NAME && tar -xzf $NAME.tgz -C artefacts/$NAME
+    python reproduce_tables.py --run artefacts/$NAME
+─────────────────────────────────────────────────────────────────────
+EOF
+[ "$N_BROKEN" -ne 0 ] && exit 5
+[ "$N_STALE" -ne 0 ] || [ "$N_STALE_F" -ne 0 ] && exit 4
+exit 0

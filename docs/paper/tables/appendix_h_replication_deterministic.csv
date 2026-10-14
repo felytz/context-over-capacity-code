@@ -1,0 +1,8 @@
+execution,from,outputs,frames_identical,routes,pairs,identical,max_dmae_s
+"E6, run A (published bundle)",the published frames,four boosted models,same files,35,140,140,0.0
+pilot 1 (20261007_134313),the raw AVL records,main comparison (nine models),8 of 8,4,36,36,0.0
+pilot 1 (20261007_134313),the raw AVL records,information ablation (Table 5),8 of 8,4,44,44,0.0
+pilot 1 (20261007_134313),the raw AVL records,"rolling origin, tabular models",8 of 8,4,36,36,0.0
+pilot 2 (20261007_210609),the raw AVL records,main comparison (nine models),2 of 2,1,9,9,0.0
+pilot 2 (20261007_210609),the raw AVL records,information ablation (Table 5),2 of 2,1,11,11,0.0
+pilot 2 (20261007_210609),the raw AVL records,"rolling origin, tabular models",2 of 2,1,9,9,0.0

@@ -1,0 +1,82 @@
+#!/bin/bash
+# =====================================================================
+# jobs/job_fleet_concentration.slrm — concentración de flota (Pareto) por ruta
+# =====================================================================
+# Corre docs/paper/analysis/compute_fleet_concentration.py sobre el árbol de
+# datos del server. Responde: de los N camiones que la Tabla 1 cuenta como
+# "Fleet", ¿cuántos concentran el grueso de los viajes? Lee, por ruta,
+#   <root>/02_interim/routes/<ruta>/dataframes/df_final_new_trips_2024_01-08_tmin.parquet
+# (una fila por ping; un viaje = par distinto bus_code+trip_id) y saca en
+#   route_reports/fleet_concentration/:
+#     fleet_concentration_2024_01-08_tmin.csv   (una fila por ruta)
+#     fleet_concentration_2024_01-08_tmin.json
+# CPU-only, liviano (minutos): son ~cientos de miles de filas por ruta y solo
+# se hace un unique() + group_by. Escribe incremental → un timeout deja parciales.
+#
+# Enviar (desde la raíz del repo, con logs/ creada):
+#   sbatch jobs/job_fleet_concentration.slrm                     # todas las rutas
+#   sbatch jobs/job_fleet_concentration.slrm --routes 101,501    # subconjunto
+# Al terminar, bajar route_reports/fleet_concentration/ (pesa KB) al repo local
+# en docs/paper/analysis/fleet_concentration/.
+#
+#SBATCH --job-name=fleet_conc
+#SBATCH --account=pXXX
+#SBATCH --partition=cpu
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --time=02:00:00
+#SBATCH --output=logs/fleet_conc_%j.out
+#SBATCH --error=logs/fleet_conc_%j.err
+
+set -uo pipefail
+cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
+[ -f config.env ] && . ./config.env    # PY, DATA_ROOT (con ${VAR:-…}: el entorno gana)
+mkdir -p logs
+
+# ── Parámetros (la CLI gana vía "$@") ──────────────────────────────────────────
+# ⚠ NO apuntar a un árbol ajeno: esta corrida se lee A SÍ MISMA. El default es
+# el data/ de ESTA carpeta (por eso el job se envía desde su raíz). Cambiarlo
+# por la ruta de otra corrida mezcla procedencias sin que nada avise.
+ROOT="${DATA_ROOT:-$(pwd)/data}"       # raíz con 02_interim/routes/
+OUT="route_reports/fleet_concentration"
+RANGE="2024_01-08"
+TAG="tmin"
+
+# ── Entorno: python por RUTA ABSOLUTA (conda activate FALLA en silencio en los
+#    nodos — trampa #3 del HANDOFF). tf-local trae polars + pyarrow. ───────────
+module purge 2>/dev/null || true
+unset PYTHONPATH PYTHONHOME VIRTUAL_ENV      # no dejar que ~/db/.venv se cuele
+PY="${PY:-/lustre/home/usuario/.conda/envs/tf-local/bin/python}"
+
+export PYTHONIOENCODING=utf-8
+export PYTHONUNBUFFERED=1
+export MPLBACKEND=Agg
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+export POLARS_MAX_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+
+# ── Fail-fast ──────────────────────────────────────────────────────────────────
+"$PY" - <<'PYCHK' || { echo "ERROR: $PY no tiene polars (¿env equivocado?)"; exit 1; }
+import polars
+print("python OK · polars", polars.__version__)
+PYCHK
+
+echo "Nodo   : $(hostname)"
+echo "Inicio : $(date)"
+echo "Root   : $ROOT   out=$OUT   range=$RANGE   tag=$TAG"
+[ -d "$ROOT/02_interim/routes" ] || { echo "ERROR: no existe $ROOT/02_interim/routes"; exit 2; }
+
+"$PY" -u docs/paper/analysis/compute_fleet_concentration.py \
+    --root "$ROOT" \
+    --out "$OUT" \
+    --range "$RANGE" \
+    --tag "$TAG" \
+    --routes all \
+    "$@"
+rc=$?
+
+echo "Fin    : $(date)  (rc=$rc)"
+if [ "$rc" -eq 0 ]; then
+    echo "→ Bajar al repo local: $OUT/  →  docs/paper/analysis/fleet_concentration/"
+    ls -lh "$OUT"/fleet_concentration_*.csv "$OUT"/fleet_concentration_*.json 2>/dev/null
+fi
+exit $rc

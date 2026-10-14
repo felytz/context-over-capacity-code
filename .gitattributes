@@ -1,0 +1,17 @@
+# Todo lo que se ejecuta en el servidor (Slurm/bash) tiene que llegar con LF.
+# Sin esto, con core.autocrlf=true en Windows el checkout mete \r\n y sbatch
+# rechaza el script: "Batch script contains DOS line breaks".
+*.sh     text eol=lf
+*.slrm   text eol=lf
+*.slurm  text eol=lf
+*.py     text eol=lf
+*.env    text eol=lf
+# El manifiesto lo lee `sha256sum -c`: con CRLF cada ruta acabaría en \r y no se hallaría.
+*.sha256 text eol=lf
+# Las entradas del corte (cortes/) se guardan byte a byte: el pre-registro y su README
+# dan su sha256, y una conversión de fin de línea lo cambiaría.
+cortes/** -text
+# Lo mismo con la evidencia copiada del test (CRLF y BOM, como salió allá): los
+# generadores citan su sha256 (make_appendices.py, variants_separation.py).
+docs/paper/analysis/cut_invariance_*.csv -text
+docs/paper/analysis/variants_validation.csv -text

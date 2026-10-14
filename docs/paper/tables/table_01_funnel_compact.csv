@@ -1,0 +1,4 @@
+label,routes,pings_raw,pct_kept,stretches,coverage_med,trips_valid,trips_modeled,grid_trips,grid_kept_pct,dur_med_min
+Routes in the public AVL release,27,48557439,91.35765031697818,150589,75.22,277132,269088,252845,93.96368474253775,134.9
+"Variant routes, separated from four shared route codes",8,7471237,99.39923714640562,20637,76.1,40851,40333,37894,93.9528425854759,141.0
+**All routes**,35,56028676,92.42996908922134,171226,75.22,317983,309421,290739,93.9622714683231,138.0

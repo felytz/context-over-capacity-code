@@ -1,0 +1,36 @@
+route,label,family,avl_group_id,une_number,une_name,origin
+101,101,101,101,102,Línea 1 Manga,public
+102,102,102,102,101,Línea 1 Sahuaro,public
+201,201,201,201,201,Línea 2 Cárdenas - Cuauhtémoc,public
+202,202,202,202,202,Línea 2 Periférico - Lomas,public
+301,301,301,301,301,Línea 3 Monteverde,public
+302,302,302,302,302,Línea 3 Reyes,public
+401,401,401,401,401,Línea 4 Centro,public
+402,402,402,402,402,Línea 4 Periférico,public
+501,501,501,501,501,Línea 5 12 de Octubre,public
+601,601,601,601,601,Línea 6 Lopez del Castillo,public
+801,801,801,801,801,Línea 8 Olivos,public
+901,901,901,901,901,Línea 9 Villas del Sur,public
+902,902,902,902,902,Línea 9 Hacienda del Sur,public
+1001,1001,1001,1001,1002,Línea 10 Caturegli,public
+1002,1002,1002,1002,1001,Línea 10 VH,public
+1101,1101,1101,1101,1101,Línea 11 Altares - Nuevo Hermosillo,variant
+110101,1101-ALT,1101,1101,1101-ALT,Línea 11 Altares - Nuevo Hermosillo (alterna),variant
+1201,1201,1201,1201,1201,Línea 12 Zapata,public
+1301,1301,1301,1301,1301,Línea 13 Simon Bley,public
+1401,1401,1401,1400,1401,Linea 14 Sur 5 Mayo - Palo Verde,variant
+1402,1402,1401,1400,1402,Línea 14 Palo verde - 5 de mayo,variant
+1501,1501,1501,1501,1501,Línea 15 Fuentes Modelo,public
+1502,1502,1502,1502,1502,Línea 15 Villa Bonita,public
+1601,1601,1601,1601,1602,Línea 16 Monteverde,public
+1602,1602,1602,1602,1601,Línea 16 Reforma,public
+1701,1701,1701,1701,1701,Línea 17 Choyal,public
+1702,1702,1702,1702,1702,Línea 17 Bachoco,public
+1703,1703,1703,1703,1703,Línea 17 Express,public
+1801,1801,1801,1801,1801,Línea 18 Lado A Soriana,variant
+180101,1801-ALT,1801,1801,1801-ALT,Línea 18 Lado A Soriana (alterna),variant
+1802,1802,1802,1802,1802,Línea 18 Lado B Soriana,variant
+180201,1802-ALT,1802,1802,1802-ALT,Línea 18 Lado B Soriana (alterna),variant
+1901,1901,1901,1901,1901,Línea 19 Bachoco,public
+1902,1902,1902,1902,1902,Línea 19 Mendoza,public
+20000,20000,20000,20000,2201,Línea 20 Montalban,public

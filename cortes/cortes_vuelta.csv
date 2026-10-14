@@ -1,0 +1,36 @@
+﻿ruta,km,lat,lon,parada,m_parada,metodo,tipo,fuente
+101,24.26,29.08893,-111.05011,Calle del Jet y Garcia Morales,134,ocupacion,dos,dos terminales: la de más cobertura con la vuelta (69.9 % contra 65.2 % cortando en km 50.07)
+102,0.0,29.09794,-110.92523,Blvd. Enrique Mazon Lopez Y Pilares,0,km0,una,una terminal: la de la regla recomendado
+201,19.49,29.13712,-110.99616,Solildaridad y Emancipacion,85,descanso1,una,una terminal: la de la regla recomendado
+202,32.83,29.12939,-111.01446,Angel Arreola y Mario MORUA Jhonson,26,descanso1,una,una terminal: la de la regla recomendado
+301,22.35,29.15305,-110.97781,Blvd. Luz Valencia y Jose Maria Escriva,52,explorador,dos,dos terminales: la de más cobertura con la vuelta (78.5 % contra 69.9 % cortando en km 39.66)
+302,26.88,29.08759,-111.05111,Av. del Jet y Concord,31,descanso1,una,una terminal: la de la regla recomendado
+401,3.43,29.14343,-110.99194,Calle Margarita Maza de Juarez y Placeritas,2,descanso1,una,una terminal: la de la regla recomendado
+402,44.14,29.14329,-110.99196,M MAZA DE JUAREZ Y CAMPO VERDE,30,descanso1,una,una terminal: la de la regla recomendado
+501,0.0,29.14723,-110.97733,josemaria escriva de balaguer y blvd progreso,0,km0,una,una terminal: la de la regla recomendado
+601,63.21,29.15177,-110.99657,Solidaridad patio,12,descanso2,dos,dos terminales: la de más cobertura con la vuelta (74.3 % contra 64.3 % cortando en km 32.84)
+801,35.95,29.09587,-110.9384,calle luis encinas y av veracruz,25,descanso1,una,una terminal: la de la regla recomendado
+901,13.83,29.05467,-110.95552,VILDOSOLA Y MANUEL OJEDA,41,descanso1,una,una terminal: la de la regla recomendado
+902,0.0,29.08008,-110.95418,DR ALBERTO G NORIEGA Y CALLE GARMENDIA,0,km0,una,una terminal: la de la regla recomendado
+1001,9.83,29.08095,-110.9539,Av. Luis Donaldo Colosio / Calle Guerrero,18,descanso1,una,una terminal: la de la regla recomendado
+1002,32.63,29.07864,-110.95292,Av. Monterrey  / Calle Guerrero,46,intervalos1,una,una terminal: la de la regla recomendado
+1201,18.48,29.15172,-110.99656,Solidaridad patio,17,descanso1,una,una terminal: la de la regla recomendado
+1301,14.73,29.15135,-110.9834,francisco i. madero y blvd luz valencia,8,descanso1,una,una terminal: la de la regla recomendado
+1501,6.43,29.10091,-110.99575,Av Jose Maria Mendoza Y Calle 4,138,intervalos,dos,dos terminales: la de más cobertura con la vuelta (69.7 % contra 69.7 % cortando en km 28.78)
+1502,0.38,29.08117,-110.95125,Benito Juárez y Luis Donaldo Colosio,35,intervalos1,una,una terminal: la de la regla recomendado
+1601,22.3,29.16618,-110.98329,,53,ocupacion,dos,dos terminales: la de más cobertura con la vuelta (87.8 % contra 86.1 % cortando en km 9.67)
+1602,2.57,29.16611,-110.98391,,17,dwell_art,dos,dos terminales: la de más cobertura con la vuelta (87.7 % contra 85.1 % cortando en km 15.43)
+1701,0.0,29.15188,-110.99679,Blvd Solidaridad Y Maria Jesus Tanori,0,geo_extremos,dos,dos terminales: la de más cobertura con la vuelta (81.4 % contra 78.3 % cortando en km 19.56)
+1702,32.83,29.07888,-110.94978,MONTERREY Y MATAMOROS,173,intervalos1,una,una terminal: la de la regla recomendado
+1703,28.15,29.08153,-110.9513,Benito Juárez y Luis Donaldo Colosio,5,consenso1,una,una terminal: la de la regla recomendado
+1901,0.0,29.09794,-110.92523,Blvd. Enrique Mazon Lopez Y Pilares,0,km0,una,una terminal: la de la regla recomendado
+1902,0.0,29.09794,-110.92523,Blvd. Enrique Mazon Lopez Y Pilares,0,km0,una,una terminal: la de la regla recomendado
+20000,12.05,29.08332,-110.98417,BLVD SOLIDARIDAD Y CALLE REAL DEL ARCO,53,intervalos1,una,una terminal: la de la regla recomendado
+1101,43.7,29.11307,-111.01603,lazaro mercado y chilpancingo,36,consenso1,variante,regla de un corte sin pasajeros (metodos_viajes_2024-01-01_2024-08-31_intervalos_variantes)
+1401,35.21,29.05524,-110.96656,LAZARO CARDENAS Y MEOQUI,44,descanso1,variante,"dos terminales (familia 1400): Lázaro Cárdenas y Meoqui, la de más cobertura (marzo: 79.8 % contra 74.2 % en Bernardo Reyes)"
+1402,34.96,29.05524,-110.96656,LAZARO CARDENAS Y MEOQUI,44,descanso1,variante,"dos terminales (familia 1400): Lázaro Cárdenas y Meoqui, la de más cobertura (marzo: 79.0 % contra 75.7 % en Bernardo Reyes)"
+1801,0.0,29.14345,-110.99194,Calle Margarita Maza de Juarez y Placeritas,1,km0,variante,regla de un corte sin pasajeros (metodos_viajes_2024-01-01_2024-08-31_intervalos_variantes)
+1802,45.03,29.14373,-110.99204,M MAZA DE JUAREZ Y CAMPO VERDE,20,descanso1,variante,regla de un corte sin pasajeros (metodos_viajes_2024-01-01_2024-08-31_intervalos_variantes)
+110101,43.8,29.11262,-111.01603,lazaro mercado y chilpancingo,14,descanso1,variante,regla de un corte sin pasajeros (metodos_viajes_2024-01-01_2024-08-31_intervalos_variantes)
+180101,0.0,29.14345,-110.99194,Calle Margarita Maza de Juarez y Placeritas,1,km0,variante,regla de un corte sin pasajeros (metodos_viajes_2024-01-01_2024-08-31_intervalos_variantes)
+180201,44.49,29.14373,-110.99204,M MAZA DE JUAREZ Y CAMPO VERDE,20,descanso1,variante,regla de un corte sin pasajeros (metodos_viajes_2024-01-01_2024-08-31_intervalos_variantes)
